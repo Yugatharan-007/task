@@ -1,3 +1,3 @@
 # task
 "yuva"
-" yuva k💋"
+" yuva k"
