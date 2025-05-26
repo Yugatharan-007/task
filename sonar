@@ -1,0 +1,81 @@
+pipeline {
+    agent any
+
+    environment {
+        IMAGE_NAME = 'devsecops-app'
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        REGISTRY = 'your-dockerhub-username'
+        SONARQUBE_ENV = 'SonarQube'
+    }
+
+    tools {
+        dockerTool 'Default'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                git "https://github.com/Yugatharan007/task.git"
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    sh "docker build -t $IMAGE_NAME:$IMAGE_TAG ."
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            steps {
+                sh 'chmod +x ./scripts/trivy_scan.sh'
+                sh './scripts/trivy_scan.sh'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            environment {
+                SONAR_TOKEN = credentials('sonar-token-id')
+            }
+            steps {
+                withSonarQubeEnv("${SONARQUBE_ENV}") {
+                    sh './scripts/sonarqube_scan.sh'
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'USERNAME',
+                    passwordVariable: 'PASSWORD'
+                )]) {
+                    sh """
+                        echo "$PASSWORD" | docker login -u "$USERNAME" --password-stdin
+                        docker tag $IMAGE_NAME:$IMAGE_TAG $REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+                        docker push $REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes with Helm') {
+            steps {
+                sh "helm upgrade --install devsecops-app helm/devsecops-app --set image.tag=$IMAGE_TAG"
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Pipeline finished. Cleanup or report generation can go here."
+        }
+        failure {
+            mail to: 'team@example.com',
+                 subject: "Build Failed: ${env.JOB_NAME} [${env.BUILD_NUMBER}]",
+                 body: "Check Jenkins for more details: ${env.BUILD_URL}"
+        }
+    }
+}
